@@ -1,0 +1,185 @@
+import { create } from "zustand";
+import type { Selection } from "@/lib/editor/tools/selection";
+
+export type SourceFormat = "png" | "jpeg" | "webp" | "apng" | "webp-animated";
+
+export type Frame = {
+  imageData: ImageData;
+  duration: number;
+};
+
+export type EditorDocument = {
+  width: number;
+  height: number;
+  frames: Frame[];
+  format: SourceFormat;
+  fileName: string;
+};
+
+export type Tool = "recolor" | "eyedropper" | "brush" | "eraser" | "crop" | "select";
+export type SelectMode = "rect" | "freehand";
+
+export type CropRect = { x: number; y: number; width: number; height: number };
+
+interface EditorState {
+  document: EditorDocument | null;
+  activeFrameIndex: number;
+  activeTool: Tool;
+  isRecolorPanelOpen: boolean;
+  brushColor: string;
+  brushSize: number;
+  // Whole-document snapshots. Stickers are small, so this is cheap and — unlike a
+  // per-frame diff stack — handles dimension-changing edits (crop) for free.
+  undoStack: EditorDocument[];
+  redoStack: EditorDocument[];
+  /** Uncommitted recolor preview shown instead of the active frame's real pixels. */
+  previewImageData: ImageData | null;
+  /** RGBA sampled by the eyedropper tool, consumed by whichever panel requested it. */
+  pickedColor: [number, number, number, number] | null;
+  /** Rect (image pixel space) awaiting confirm/cancel from the crop tool. */
+  pendingCropRect: CropRect | null;
+  /** Which drag shape the select tool draws. */
+  selectMode: SelectMode;
+  /** Scopes the recolor tool to part of the image, e.g. one of two watermelons on the same sticker. */
+  selection: Selection | null;
+
+  loadDocument: (doc: EditorDocument) => void;
+  closeDocument: () => void;
+  setActiveFrame: (index: number) => void;
+  setActiveTool: (tool: Tool) => void;
+  setRecolorPanelOpen: (open: boolean) => void;
+  setBrushColor: (color: string) => void;
+  setBrushSize: (size: number) => void;
+  setPreview: (imageData: ImageData | null) => void;
+  setPickedColor: (color: [number, number, number, number] | null) => void;
+  setPendingCropRect: (rect: CropRect | null) => void;
+  setSelectMode: (mode: SelectMode) => void;
+  setSelection: (selection: Selection | null) => void;
+  /** Push the current document to undo history, then replace it with `next`. */
+  commitDocument: (next: EditorDocument) => void;
+  commitFrame: (frameIndex: number, imageData: ImageData) => void;
+  commitAllFrames: (imageDatas: ImageData[]) => void;
+  undo: () => void;
+  redo: () => void;
+}
+
+export const useEditorStore = create<EditorState>((set, get) => ({
+  document: null,
+  activeFrameIndex: 0,
+  activeTool: "recolor",
+  isRecolorPanelOpen: false,
+  brushColor: "#facc15",
+  brushSize: 12,
+  undoStack: [],
+  redoStack: [],
+  previewImageData: null,
+  pickedColor: null,
+  pendingCropRect: null,
+  selectMode: "rect",
+  selection: null,
+
+  loadDocument: (doc) =>
+    set({
+      document: doc,
+      activeFrameIndex: 0,
+      undoStack: [],
+      redoStack: [],
+      previewImageData: null,
+      pickedColor: null,
+      pendingCropRect: null,
+      selection: null,
+      isRecolorPanelOpen: true,
+      activeTool: "recolor",
+    }),
+
+  closeDocument: () =>
+    set({
+      document: null,
+      undoStack: [],
+      redoStack: [],
+      previewImageData: null,
+      pickedColor: null,
+      pendingCropRect: null,
+      selection: null,
+      isRecolorPanelOpen: false,
+    }),
+
+  setActiveFrame: (index) => set({ activeFrameIndex: index, previewImageData: null }),
+
+  setActiveTool: (tool) =>
+    set({ activeTool: tool, isRecolorPanelOpen: tool === "recolor", pendingCropRect: null }),
+
+  setRecolorPanelOpen: (open) =>
+    set({ isRecolorPanelOpen: open, previewImageData: open ? get().previewImageData : null }),
+
+  setBrushColor: (color) => set({ brushColor: color }),
+
+  setBrushSize: (size) => set({ brushSize: size }),
+
+  setPreview: (imageData) => set({ previewImageData: imageData }),
+
+  setPickedColor: (color) => set({ pickedColor: color }),
+
+  setPendingCropRect: (rect) => set({ pendingCropRect: rect }),
+
+  setSelectMode: (mode) => set({ selectMode: mode }),
+
+  setSelection: (selection) => set({ selection }),
+
+  commitDocument: (next) => {
+    const doc = get().document;
+    if (!doc) return;
+    const dimensionsChanged = next.width !== doc.width || next.height !== doc.height;
+    set({
+      document: next,
+      undoStack: [...get().undoStack, doc],
+      redoStack: [],
+      previewImageData: null,
+      // A selection mask is sized to the old dimensions and stops making sense after a crop.
+      selection: dimensionsChanged ? null : get().selection,
+    });
+  },
+
+  commitFrame: (frameIndex, imageData) => {
+    const doc = get().document;
+    if (!doc || !doc.frames[frameIndex]) return;
+    const nextFrames = doc.frames.slice();
+    nextFrames[frameIndex] = { ...nextFrames[frameIndex], imageData };
+    get().commitDocument({ ...doc, frames: nextFrames });
+  },
+
+  commitAllFrames: (imageDatas) => {
+    const doc = get().document;
+    if (!doc || imageDatas.length !== doc.frames.length) return;
+    get().commitDocument({
+      ...doc,
+      frames: doc.frames.map((f, i) => ({ ...f, imageData: imageDatas[i] })),
+    });
+  },
+
+  undo: () => {
+    const { undoStack, document: doc } = get();
+    if (undoStack.length === 0 || !doc) return;
+    const previous = undoStack[undoStack.length - 1];
+    set({
+      document: previous,
+      activeFrameIndex: Math.min(get().activeFrameIndex, previous.frames.length - 1),
+      undoStack: undoStack.slice(0, -1),
+      redoStack: [...get().redoStack, doc],
+      previewImageData: null,
+    });
+  },
+
+  redo: () => {
+    const { redoStack, document: doc } = get();
+    if (redoStack.length === 0 || !doc) return;
+    const next = redoStack[redoStack.length - 1];
+    set({
+      document: next,
+      activeFrameIndex: Math.min(get().activeFrameIndex, next.frames.length - 1),
+      redoStack: redoStack.slice(0, -1),
+      undoStack: [...get().undoStack, doc],
+      previewImageData: null,
+    });
+  },
+}));
