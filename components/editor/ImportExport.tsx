@@ -3,10 +3,11 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useEditorStore } from "@/lib/editor/store";
 import { detectFormat } from "@/lib/formats/detect";
-import { decodeStaticImage, encodeStaticImage } from "@/lib/formats/staticImage";
-import { decodeApng, encodeApng } from "@/lib/formats/apng";
-import { decodeAnimatedWebp, encodeAnimatedWebp } from "@/lib/formats/webp";
+import { decodeStaticImage } from "@/lib/formats/staticImage";
+import { decodeApng } from "@/lib/formats/apng";
+import { decodeAnimatedWebp } from "@/lib/formats/webp";
 import { buildWhatsAppSticker } from "@/lib/formats/whatsappSticker";
+import { downloadDocument } from "@/lib/editor/download";
 
 function ErrorToast({ message }: { message: string }) {
   return (
@@ -64,7 +65,10 @@ export function ImportButton({
       <input
         ref={inputRef}
         type="file"
-        accept=".png,.jpg,.jpeg,.webp"
+        // No `accept` on purpose: scoping it to image types makes Android Chrome
+        // launch its sandboxed Photo Picker instead of the real file browser,
+        // which has no "Files" option at all. We validate the picked file's
+        // actual content ourselves in handleFile below regardless.
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -87,34 +91,13 @@ export function DownloadButton({
   const doc = useEditorStore((s) => s.document);
   const activeFrameIndex = useEditorStore((s) => s.activeFrameIndex);
 
-  async function handleDownload() {
-    if (!doc) return;
-
-    let blob: Blob;
-    let ext: string;
-    if (doc.format === "webp-animated" && doc.frames.length > 1) {
-      blob = await encodeAnimatedWebp(doc);
-      ext = "webp";
-    } else if (doc.frames.length > 1) {
-      blob = encodeApng(doc);
-      ext = "png";
-    } else {
-      const mime =
-        doc.format === "jpeg" ? "image/jpeg" : doc.format === "webp" ? "image/webp" : "image/png";
-      blob = await encodeStaticImage(doc.frames[activeFrameIndex].imageData, mime);
-      ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : "png";
-    }
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${doc.fileName.replace(/\.[^.]+$/, "")}-yellow.${ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
-    <button type="button" onClick={handleDownload} disabled={!doc} className={className}>
+    <button
+      type="button"
+      onClick={() => doc && downloadDocument(doc, activeFrameIndex)}
+      disabled={!doc}
+      className={className}
+    >
       {children}
     </button>
   );

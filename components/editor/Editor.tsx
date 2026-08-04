@@ -8,6 +8,7 @@ import { ToolOptionsBar } from "./ToolOptionsBar";
 import { FrameStrip } from "./FrameStrip";
 import { ImportButton } from "./ImportExport";
 import { MelonMark } from "./MelonMark";
+import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { useEditorStore } from "@/lib/editor/store";
 
 export default function Editor() {
@@ -16,6 +17,7 @@ export default function Editor() {
 
   return (
     <div className="flex h-full flex-col">
+      <KeyboardShortcuts />
       <header className="flex items-center justify-center gap-2 px-4 py-3">
         <MelonMark size={18} />
         <span className="text-sm font-medium text-foreground">Yellow Watermelons are real</span>
