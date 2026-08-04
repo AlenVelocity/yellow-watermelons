@@ -81,7 +81,7 @@ export function Toolbar() {
         <ShareButton
           className={cn(
             actionButtonClass,
-            "w-20 rounded-lg bg-primary text-primary-foreground hover:text-primary-foreground",
+            "bg-primary text-primary-foreground hover:text-primary-foreground",
           )}
         >
           <Share2 size={17} strokeWidth={2} />
