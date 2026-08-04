@@ -3,7 +3,7 @@ import { encodeStaticImage } from "@/lib/formats/staticImage";
 import { encodeApng } from "@/lib/formats/apng";
 import { encodeAnimatedWebp } from "@/lib/formats/webp";
 
-export async function downloadDocument(doc: EditorDocument, activeFrameIndex: number): Promise<void> {
+export async function buildDocumentFile(doc: EditorDocument, activeFrameIndex: number): Promise<File> {
   let blob: Blob;
   let ext: string;
 
@@ -20,10 +20,16 @@ export async function downloadDocument(doc: EditorDocument, activeFrameIndex: nu
     ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : "png";
   }
 
-  const url = URL.createObjectURL(blob);
+  const name = `${doc.fileName.replace(/\.[^.]+$/, "")}-yellow.${ext}`;
+  return new File([blob], name, { type: blob.type });
+}
+
+export async function downloadDocument(doc: EditorDocument, activeFrameIndex: number): Promise<void> {
+  const file = await buildDocumentFile(doc, activeFrameIndex);
+  const url = URL.createObjectURL(file);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${doc.fileName.replace(/\.[^.]+$/, "")}-yellow.${ext}`;
+  a.download = file.name;
   a.click();
   URL.revokeObjectURL(url);
 }

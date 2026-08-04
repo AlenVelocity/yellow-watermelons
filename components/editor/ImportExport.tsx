@@ -6,8 +6,7 @@ import { detectFormat } from "@/lib/formats/detect";
 import { decodeStaticImage } from "@/lib/formats/staticImage";
 import { decodeApng } from "@/lib/formats/apng";
 import { decodeAnimatedWebp } from "@/lib/formats/webp";
-import { buildWhatsAppSticker } from "@/lib/formats/whatsappSticker";
-import { downloadDocument } from "@/lib/editor/download";
+import { buildDocumentFile, downloadDocument } from "@/lib/editor/download";
 
 function ErrorToast({ message }: { message: string }) {
   return (
@@ -111,13 +110,15 @@ export function ShareButton({
   children: ReactNode;
 }) {
   const doc = useEditorStore((s) => s.document);
+  const activeFrameIndex = useEditorStore((s) => s.activeFrameIndex);
   const [error, setError] = useState<string | null>(null);
 
   async function handleShare() {
     if (!doc) return;
     setError(null);
     try {
-      const file = await buildWhatsAppSticker(doc);
+      // Same export as Save for now — no WhatsApp-spec resize/pad.
+      const file = await buildDocumentFile(doc, activeFrameIndex);
       const nav = navigator as Navigator & {
         canShare?: (data: { files: File[] }) => boolean;
         share?: (data: { files: File[]; title?: string }) => Promise<void>;

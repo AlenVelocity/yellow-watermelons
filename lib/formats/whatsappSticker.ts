@@ -31,7 +31,11 @@ export async function buildWhatsAppSticker(doc: EditorDocument): Promise<File> {
 }
 
 function resizeAndPad(imageData: ImageData, size: number): ImageData {
-  const scale = Math.min(size / imageData.width, size / imageData.height, 1);
+  // Always scale to fill the square on the limiting axis — capping at 1 (never
+  // upscaling) left small source stickers stranded in the middle of the 512x512
+  // canvas with a lot of surrounding padding. Padding on the other axis is only
+  // left over when the source isn't square, which is unavoidable without distorting it.
+  const scale = Math.min(size / imageData.width, size / imageData.height);
   const w = Math.round(imageData.width * scale);
   const h = Math.round(imageData.height * scale);
 
