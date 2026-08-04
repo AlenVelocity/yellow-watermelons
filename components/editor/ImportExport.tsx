@@ -64,7 +64,7 @@ export function ImportButton({
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp"
+        accept=".png,.jpg,.jpeg,.webp"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
