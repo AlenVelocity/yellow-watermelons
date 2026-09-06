@@ -9,6 +9,9 @@ const TOOL_KEYS: Record<string, Tool> = {
   s: "select",
   b: "brush",
   e: "eraser",
+  u: "shape",
+  t: "text",
+  f: "blur",
   c: "crop",
 };
 

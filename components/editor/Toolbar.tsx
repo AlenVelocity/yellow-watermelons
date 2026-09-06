@@ -4,11 +4,14 @@ import {
   BoxSelect,
   Crop as CropIcon,
   Download,
+  Droplet,
   Eraser,
   Paintbrush,
   Palette,
   Redo2,
   Share2,
+  Shapes,
+  Type,
   Undo2,
   Upload,
 } from "lucide-react";
@@ -17,7 +20,7 @@ import { ImportButton, DownloadButton, ShareButton } from "./ImportExport";
 import { cn } from "@/lib/utils";
 
 const toolButtonClass =
-  "flex h-14 w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-lg text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground active:bg-muted disabled:opacity-30";
+  "flex h-14 w-12 shrink-0 flex-col items-center justify-center gap-1 rounded-lg text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground active:bg-muted disabled:opacity-30";
 
 const actionButtonClass =
   "flex h-12 w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground active:bg-muted disabled:opacity-30";
@@ -27,6 +30,9 @@ const TOOLS: { tool: Tool; label: string; icon: typeof Palette }[] = [
   { tool: "select", label: "Select", icon: BoxSelect },
   { tool: "brush", label: "Brush", icon: Paintbrush },
   { tool: "eraser", label: "Eraser", icon: Eraser },
+  { tool: "shape", label: "Shape", icon: Shapes },
+  { tool: "text", label: "Text", icon: Type },
+  { tool: "blur", label: "Blur", icon: Droplet },
   { tool: "crop", label: "Crop", icon: CropIcon },
 ];
 
@@ -42,7 +48,7 @@ export function Toolbar() {
   return (
     <div className="border-t border-border bg-card">
       {hasDocument && (
-        <nav className="flex justify-center gap-1 overflow-x-auto px-2 pt-2">
+        <nav className="flex gap-1 overflow-x-auto px-2 pt-2 [justify-content:safe_center]">
           {TOOLS.map(({ tool, label, icon: Icon }) => (
             <button
               key={tool}
