@@ -1,4 +1,4 @@
-import type { Selection } from "@/lib/editor/tools/selection";
+import type { Point, Selection } from "@/lib/editor/tools/selection";
 
 export type EffectMode = "blur" | "pixelate";
 
@@ -56,43 +56,73 @@ export function beginEffectStroke(
   const mask = createLayer(width, height);
   const scratch = createLayer(width, height);
 
-  mask.ctx.lineCap = "round";
-  mask.ctx.lineJoin = "round";
-  mask.ctx.lineWidth = options.size;
-  mask.ctx.strokeStyle = "#fff";
-  mask.ctx.beginPath();
-  mask.ctx.moveTo(x, y);
-  // Draw a dot immediately so a tap-without-drag still leaves a mark.
-  mask.ctx.lineTo(x + 0.01, y + 0.01);
-  mask.ctx.stroke();
-
-  function composite() {
-    scratch.ctx.globalCompositeOperation = "source-over";
-    scratch.ctx.clearRect(0, 0, width, height);
-    scratch.ctx.drawImage(effect.canvas, 0, 0);
-    scratch.ctx.globalCompositeOperation = "destination-in";
-    scratch.ctx.drawImage(mask.canvas, 0, 0);
-
-    // Punch the stroke out of the original before laying the effect in, so the
-    // effect replaces those pixels outright — including their alpha, which matters
-    // when the brush crosses a sticker's transparent edge.
-    ctx.globalCompositeOperation = "source-over";
-    ctx.putImageData(base, 0, 0);
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.drawImage(mask.canvas, 0, 0);
-    ctx.globalCompositeOperation = "source-over";
-    ctx.drawImage(scratch.canvas, 0, 0);
-  }
-
-  composite();
+  beginMaskStroke(mask.ctx, x, y, options.size);
+  paintThroughMask(ctx, base, effect.canvas, mask.canvas, scratch);
 
   return {
     extend(nextX, nextY) {
       mask.ctx.lineTo(nextX, nextY);
       mask.ctx.stroke();
-      composite();
+      paintThroughMask(ctx, base, effect.canvas, mask.canvas, scratch);
     },
   };
+}
+
+/** Replays a recorded blur/pixelate stroke onto a copy of `source`, for every frame at once. */
+export function applyEffectAlongStroke(
+  source: ImageData,
+  points: Point[],
+  options: EffectStrokeOptions,
+): ImageData {
+  if (points.length === 0) return source;
+  const { width, height } = source;
+  const target = createLayer(width, height);
+  const mask = createLayer(width, height);
+  beginMaskStroke(mask.ctx, points[0].x, points[0].y, options.size);
+  for (const point of points.slice(1)) mask.ctx.lineTo(point.x, point.y);
+  mask.ctx.stroke();
+
+  const effect = layerFrom(renderEffect(source, options));
+  paintThroughMask(target.ctx, source, effect.canvas, mask.canvas, createLayer(width, height));
+  return target.ctx.getImageData(0, 0, width, height);
+}
+
+function beginMaskStroke(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = size;
+  ctx.strokeStyle = "#fff";
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  // Draw a dot immediately so a tap-without-drag still leaves a mark.
+  ctx.lineTo(x + 0.01, y + 0.01);
+  ctx.stroke();
+}
+
+/** Renders `base` into `target` with `effect` showing through wherever `mask` is painted. */
+function paintThroughMask(
+  target: CanvasRenderingContext2D,
+  base: ImageData,
+  effect: HTMLCanvasElement,
+  mask: HTMLCanvasElement,
+  scratch: Layer,
+) {
+  const { width, height } = base;
+  scratch.ctx.globalCompositeOperation = "source-over";
+  scratch.ctx.clearRect(0, 0, width, height);
+  scratch.ctx.drawImage(effect, 0, 0);
+  scratch.ctx.globalCompositeOperation = "destination-in";
+  scratch.ctx.drawImage(mask, 0, 0);
+
+  // Punch the stroke out of the original before laying the effect in, so the effect
+  // replaces those pixels outright — including their alpha, which matters when the
+  // brush crosses a sticker's transparent edge.
+  target.globalCompositeOperation = "source-over";
+  target.putImageData(base, 0, 0);
+  target.globalCompositeOperation = "destination-out";
+  target.drawImage(mask, 0, 0);
+  target.globalCompositeOperation = "source-over";
+  target.drawImage(scratch.canvas, 0, 0);
 }
 
 function renderEffect(source: ImageData, options: EffectOptions): ImageData {
@@ -227,7 +257,9 @@ function unpremultiply(buffer: Float32Array, width: number, height: number): Ima
   return new ImageData(out, width, height);
 }
 
-function createLayer(width: number, height: number) {
+type Layer = { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D };
+
+function createLayer(width: number, height: number): Layer {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -236,7 +268,7 @@ function createLayer(width: number, height: number) {
   return { canvas, ctx };
 }
 
-function layerFrom(imageData: ImageData) {
+function layerFrom(imageData: ImageData): Layer {
   const layer = createLayer(imageData.width, imageData.height);
   layer.ctx.putImageData(imageData, 0, 0);
   return layer;

@@ -62,6 +62,8 @@ interface EditorState {
   shapeFilled: boolean;
   /** Caption being positioned and styled, before it is baked into the frame. */
   textDraft: TextDraft | null;
+  /** When on, an edit is repeated across every frame instead of only the active one. */
+  applyToAllFrames: boolean;
   /** Scopes the recolor tool to part of the image, e.g. one of two watermelons on the same sticker. */
   selection: Selection | null;
 
@@ -82,6 +84,7 @@ interface EditorState {
   setShapeKind: (kind: ShapeKind) => void;
   setShapeFilled: (filled: boolean) => void;
   updateTextDraft: (patch: Partial<TextDraft>) => void;
+  setApplyToAllFrames: (value: boolean) => void;
   /** Push the current document to undo history, then replace it with `next`. */
   commitDocument: (next: EditorDocument) => void;
   commitFrame: (frameIndex: number, imageData: ImageData) => void;
@@ -109,6 +112,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   shapeKind: "arrow",
   shapeFilled: false,
   textDraft: null,
+  applyToAllFrames: false,
 
   loadDocument: (doc) =>
     set({
@@ -121,6 +125,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       pendingCropRect: null,
       selection: null,
       textDraft: null,
+      applyToAllFrames: false,
       isRecolorPanelOpen: true,
       activeTool: "recolor",
     }),
@@ -186,6 +191,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!draft) return;
     set({ textDraft: { ...draft, ...patch } });
   },
+
+  setApplyToAllFrames: (value) => set({ applyToAllFrames: value }),
 
   commitDocument: (next) => {
     const doc = get().document;

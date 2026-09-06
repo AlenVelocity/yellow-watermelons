@@ -74,6 +74,18 @@ export function drawShape(ctx: CanvasRenderingContext2D, shape: ShapeSpec): void
   ctx.restore();
 }
 
+/** Bakes `shape` into a copy of `source`, for repeating it across every frame. */
+export function renderShapeToImageData(source: ImageData, shape: ShapeSpec): ImageData {
+  const canvas = document.createElement("canvas");
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context unavailable");
+  ctx.putImageData(source, 0, 0);
+  drawShape(ctx, shape);
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
 function paint(ctx: CanvasRenderingContext2D, shape: ShapeSpec) {
   if (shape.filled) ctx.fill();
   else ctx.stroke();
