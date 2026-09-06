@@ -1,25 +1,35 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useEditorStore } from "@/lib/editor/store";
+import { useEditorStore, type Tool } from "@/lib/editor/store";
+import { beginEffectStroke, type EffectStroke } from "@/lib/editor/tools/effects";
 import { beginStroke, continueStroke, endStroke } from "@/lib/editor/tools/paint";
 import { rectToMask, polygonToMask, type Point, type Rect } from "@/lib/editor/tools/selection";
+import { drawShape, isDrawableShape, type ShapeSpec } from "@/lib/editor/tools/shapes";
+import { drawText } from "@/lib/editor/tools/text";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 6;
 // Minimum image-space distance between consecutive freehand points, to keep the
 // path/mask cheap at high zoom without visibly affecting the traced shape.
 const FREEHAND_MIN_STEP = 1.5;
+/** Tools whose result lands exactly where the pointer is, so a crosshair helps. */
+const CROSSHAIR_TOOLS: Tool[] = ["eyedropper", "blur", "text", "shape"];
 
 type LiveSelection = { shape: "rect"; rect: Rect } | { shape: "freehand"; points: Point[] };
 
 export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Sits on top of the image and holds nothing but previews — a shape being dragged
+  // out, or the caption being positioned — drawn with the same code that commits them,
+  // so what you see is what gets baked in.
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const [fitSize, setFitSize] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [liveSelection, setLiveSelection] = useState<LiveSelection | null>(null);
+  const [liveShape, setLiveShape] = useState<ShapeSpec | null>(null);
 
   const doc = useEditorStore((s) => s.document);
   const activeFrameIndex = useEditorStore((s) => s.activeFrameIndex);
@@ -27,6 +37,11 @@ export function Canvas() {
   const selectMode = useEditorStore((s) => s.selectMode);
   const brushColor = useEditorStore((s) => s.brushColor);
   const brushSize = useEditorStore((s) => s.brushSize);
+  const effectMode = useEditorStore((s) => s.effectMode);
+  const effectStrength = useEditorStore((s) => s.effectStrength);
+  const shapeKind = useEditorStore((s) => s.shapeKind);
+  const shapeFilled = useEditorStore((s) => s.shapeFilled);
+  const textDraft = useEditorStore((s) => s.textDraft);
   const previewImageData = useEditorStore((s) => s.previewImageData);
   const pendingCropRect = useEditorStore((s) => s.pendingCropRect);
   const selection = useEditorStore((s) => s.selection);
@@ -34,6 +49,7 @@ export function Canvas() {
   const setActiveTool = useEditorStore((s) => s.setActiveTool);
   const setPendingCropRect = useEditorStore((s) => s.setPendingCropRect);
   const setSelection = useEditorStore((s) => s.setSelection);
+  const updateTextDraft = useEditorStore((s) => s.updateTextDraft);
   const commitFrame = useEditorStore((s) => s.commitFrame);
 
   const frame = doc?.frames[activeFrameIndex] ?? null;
@@ -43,6 +59,9 @@ export function Canvas() {
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
   const isDrawingRef = useRef(false);
+  const effectStrokeRef = useRef<EffectStroke | null>(null);
+  const isMovingTextRef = useRef(false);
+  const shapeStartRef = useRef<Point | null>(null);
   const cropStartRef = useRef<{ x: number; y: number } | null>(null);
   const selectRectStartRef = useRef<{ x: number; y: number } | null>(null);
   const freehandPointsRef = useRef<Point[]>([]);
@@ -50,10 +69,16 @@ export function Canvas() {
   // variable) in finalizeSelection avoids stale-closure reads when several
   // pointermove events fire in the same synchronous batch (fast drags).
   const liveSelectionRef = useRef<LiveSelection | null>(null);
+  const liveShapeRef = useRef<ShapeSpec | null>(null);
 
   function updateLiveSelection(next: LiveSelection | null) {
     liveSelectionRef.current = next;
     setLiveSelection(next);
+  }
+
+  function updateLiveShape(next: ShapeSpec | null) {
+    liveShapeRef.current = next;
+    setLiveShape(next);
   }
 
   // Backing canvas stays at native image resolution; CSS handles the on-screen scale.
@@ -65,6 +90,20 @@ export function Canvas() {
     const ctx = canvas.getContext("2d");
     ctx?.putImageData(renderedData, 0, 0);
   }, [renderedData]);
+
+  // Preview layer: repainted from scratch whenever the shape being dragged or the
+  // caption being placed changes.
+  useEffect(() => {
+    const canvas = overlayRef.current;
+    if (!canvas || !renderedData) return;
+    if (canvas.width !== renderedData.width) canvas.width = renderedData.width;
+    if (canvas.height !== renderedData.height) canvas.height = renderedData.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (liveShape) drawShape(ctx, liveShape);
+    if (activeTool === "text" && textDraft) drawText(ctx, textDraft);
+  }, [liveShape, textDraft, activeTool, renderedData]);
 
   // Fit the canvas into the available space, preserving aspect ratio.
   useEffect(() => {
@@ -127,6 +166,17 @@ export function Canvas() {
     updateLiveSelection(null);
   }
 
+  function shapeAt(start: Point, end: Point): ShapeSpec {
+    return {
+      kind: shapeKind,
+      start,
+      end,
+      color: brushColor,
+      strokeWidth: brushSize,
+      filled: shapeFilled,
+    };
+  }
+
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -136,10 +186,14 @@ export function Canvas() {
     if (pointersRef.current.size === 2) {
       // Second finger down — switch to pinch mode, abandon any single-finger stroke.
       isDrawingRef.current = false;
+      effectStrokeRef.current = null;
+      isMovingTextRef.current = false;
+      shapeStartRef.current = null;
       cropStartRef.current = null;
       selectRectStartRef.current = null;
       freehandPointsRef.current = [];
       updateLiveSelection(null);
+      updateLiveShape(null);
       pinchRef.current = computePinchState(pointersRef.current);
       return;
     }
@@ -167,6 +221,31 @@ export function Canvas() {
         color: brushColor,
         mode: activeTool,
       });
+      return;
+    }
+
+    if (activeTool === "blur") {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      isDrawingRef.current = true;
+      effectStrokeRef.current = beginEffectStroke(ctx, coords.x, coords.y, {
+        mode: effectMode,
+        strength: effectStrength,
+        size: brushSize,
+      });
+      return;
+    }
+
+    if (activeTool === "shape") {
+      shapeStartRef.current = coords;
+      updateLiveShape(shapeAt(coords, coords));
+      return;
+    }
+
+    if (activeTool === "text") {
+      // Tap anywhere to drop the caption there, then keep dragging to nudge it.
+      isMovingTextRef.current = true;
+      updateTextDraft({ x: coords.x, y: coords.y });
       return;
     }
 
@@ -209,6 +288,21 @@ export function Canvas() {
     if (isDrawingRef.current && (activeTool === "brush" || activeTool === "eraser")) {
       const ctx = canvas.getContext("2d");
       if (ctx) continueStroke(ctx, coords.x, coords.y);
+      return;
+    }
+
+    if (isDrawingRef.current && activeTool === "blur") {
+      effectStrokeRef.current?.extend(coords.x, coords.y);
+      return;
+    }
+
+    if (activeTool === "shape" && shapeStartRef.current) {
+      updateLiveShape(shapeAt(shapeStartRef.current, coords));
+      return;
+    }
+
+    if (activeTool === "text" && isMovingTextRef.current) {
+      updateTextDraft({ x: coords.x, y: coords.y });
       return;
     }
 
@@ -256,9 +350,22 @@ export function Canvas() {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (canvas && ctx) {
-        endStroke(ctx);
+        // The blur brush composites straight onto the canvas and has no path to close.
+        if (effectStrokeRef.current) effectStrokeRef.current = null;
+        else endStroke(ctx);
         commitFrame(activeFrameIndex, ctx.getImageData(0, 0, canvas.width, canvas.height));
       }
+    }
+
+    if (activeTool === "shape" && pointersRef.current.size === 0) {
+      const shape = liveShapeRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (shape && canvas && ctx && isDrawableShape(shape)) {
+        drawShape(ctx, shape);
+        commitFrame(activeFrameIndex, ctx.getImageData(0, 0, canvas.width, canvas.height));
+      }
+      updateLiveShape(null);
     }
 
     if (activeTool === "select" && pointersRef.current.size === 0) {
@@ -266,6 +373,8 @@ export function Canvas() {
     }
 
     if (pointersRef.current.size === 0) {
+      isMovingTextRef.current = false;
+      shapeStartRef.current = null;
       cropStartRef.current = null;
       selectRectStartRef.current = null;
       freehandPointsRef.current = [];
@@ -302,9 +411,14 @@ export function Canvas() {
               width: fitSize.width,
               height: fitSize.height,
               touchAction: "none",
-              cursor: activeTool === "eyedropper" ? "crosshair" : "default",
+              cursor: CROSSHAIR_TOOLS.includes(activeTool) ? "crosshair" : "default",
             }}
             className="rounded-xl bg-[conic-gradient(#27272a_25%,#18181b_0_50%,#27272a_0_75%,#18181b_0)] bg-[length:20px_20px] shadow-lg"
+          />
+          <canvas
+            ref={overlayRef}
+            className="pointer-events-none absolute left-0 top-0 rounded-xl"
+            style={{ width: fitSize.width, height: fitSize.height }}
           />
           {pendingCropRect && fitSize.width > 0 && (
             <div

@@ -1,5 +1,8 @@
 import { create } from "zustand";
+import type { EffectMode } from "@/lib/editor/tools/effects";
 import type { Selection } from "@/lib/editor/tools/selection";
+import type { ShapeKind } from "@/lib/editor/tools/shapes";
+import { createTextDraft, type TextDraft } from "@/lib/editor/tools/text";
 
 export type SourceFormat = "png" | "jpeg" | "webp" | "apng" | "webp-animated";
 
@@ -16,7 +19,16 @@ export type EditorDocument = {
   fileName: string;
 };
 
-export type Tool = "recolor" | "eyedropper" | "brush" | "eraser" | "crop" | "select";
+export type Tool =
+  | "recolor"
+  | "eyedropper"
+  | "brush"
+  | "eraser"
+  | "blur"
+  | "text"
+  | "shape"
+  | "crop"
+  | "select";
 export type SelectMode = "rect" | "freehand";
 
 export type CropRect = { x: number; y: number; width: number; height: number };
@@ -40,6 +52,16 @@ interface EditorState {
   pendingCropRect: CropRect | null;
   /** Which drag shape the select tool draws. */
   selectMode: SelectMode;
+  /** Whether the blur tool softens or mosaics the pixels it paints over. */
+  effectMode: EffectMode;
+  /** Blur radius / mosaic block size, in image pixels. */
+  effectStrength: number;
+  /** Which figure the shape tool draws on drag. */
+  shapeKind: ShapeKind;
+  /** Whether closed shapes are filled instead of outlined. */
+  shapeFilled: boolean;
+  /** Caption being positioned and styled, before it is baked into the frame. */
+  textDraft: TextDraft | null;
   /** Scopes the recolor tool to part of the image, e.g. one of two watermelons on the same sticker. */
   selection: Selection | null;
 
@@ -55,6 +77,11 @@ interface EditorState {
   setPendingCropRect: (rect: CropRect | null) => void;
   setSelectMode: (mode: SelectMode) => void;
   setSelection: (selection: Selection | null) => void;
+  setEffectMode: (mode: EffectMode) => void;
+  setEffectStrength: (strength: number) => void;
+  setShapeKind: (kind: ShapeKind) => void;
+  setShapeFilled: (filled: boolean) => void;
+  updateTextDraft: (patch: Partial<TextDraft>) => void;
   /** Push the current document to undo history, then replace it with `next`. */
   commitDocument: (next: EditorDocument) => void;
   commitFrame: (frameIndex: number, imageData: ImageData) => void;
@@ -77,6 +104,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   pendingCropRect: null,
   selectMode: "rect",
   selection: null,
+  effectMode: "blur",
+  effectStrength: 10,
+  shapeKind: "arrow",
+  shapeFilled: false,
+  textDraft: null,
 
   loadDocument: (doc) =>
     set({
@@ -88,6 +120,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       pickedColor: null,
       pendingCropRect: null,
       selection: null,
+      textDraft: null,
       isRecolorPanelOpen: true,
       activeTool: "recolor",
     }),
@@ -101,13 +134,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       pickedColor: null,
       pendingCropRect: null,
       selection: null,
+      textDraft: null,
       isRecolorPanelOpen: false,
     }),
 
   setActiveFrame: (index) => set({ activeFrameIndex: index, previewImageData: null }),
 
-  setActiveTool: (tool) =>
-    set({ activeTool: tool, isRecolorPanelOpen: tool === "recolor", pendingCropRect: null }),
+  setActiveTool: (tool) => {
+    const doc = get().document;
+    set({
+      activeTool: tool,
+      isRecolorPanelOpen: tool === "recolor",
+      pendingCropRect: null,
+      // Every other tool works on the committed pixels, so a recolor preview must not
+      // outlive the panel that produced it.
+      previewImageData: tool === "recolor" ? get().previewImageData : null,
+      textDraft:
+        tool !== "text"
+          ? null
+          : (get().textDraft ?? (doc ? createTextDraft(doc.width, doc.height) : null)),
+    });
+  },
 
   setRecolorPanelOpen: (open) =>
     set({ isRecolorPanelOpen: open, previewImageData: open ? get().previewImageData : null }),
@@ -125,6 +172,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setSelectMode: (mode) => set({ selectMode: mode }),
 
   setSelection: (selection) => set({ selection }),
+
+  setEffectMode: (mode) => set({ effectMode: mode }),
+
+  setEffectStrength: (strength) => set({ effectStrength: strength }),
+
+  setShapeKind: (kind) => set({ shapeKind: kind }),
+
+  setShapeFilled: (filled) => set({ shapeFilled: filled }),
+
+  updateTextDraft: (patch) => {
+    const draft = get().textDraft;
+    if (!draft) return;
+    set({ textDraft: { ...draft, ...patch } });
+  },
 
   commitDocument: (next) => {
     const doc = get().document;
