@@ -1,3 +1,5 @@
+import type { Point } from "@/lib/editor/tools/selection";
+
 export type PaintMode = "brush" | "eraser";
 
 export type PaintStrokeOptions = {
@@ -36,4 +38,24 @@ export function continueStroke(ctx: CanvasRenderingContext2D, x: number, y: numb
 export function endStroke(ctx: CanvasRenderingContext2D): void {
   ctx.closePath();
   ctx.globalCompositeOperation = "source-over";
+}
+
+/** Replays a recorded stroke onto a copy of `source`, for repeating it across every frame. */
+export function renderStrokeToImageData(
+  source: ImageData,
+  points: Point[],
+  options: PaintStrokeOptions,
+): ImageData {
+  const canvas = document.createElement("canvas");
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context unavailable");
+  ctx.putImageData(source, 0, 0);
+  if (points.length > 0) {
+    beginStroke(ctx, points[0].x, points[0].y, options);
+    for (const point of points.slice(1)) continueStroke(ctx, point.x, point.y);
+    endStroke(ctx);
+  }
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }

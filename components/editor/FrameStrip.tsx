@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
+import { Square, SquareCheck, X } from "lucide-react";
 import { useEditorStore, type Frame, type EditorDocument } from "@/lib/editor/store";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,8 @@ export function FrameStrip() {
   const activeFrameIndex = useEditorStore((s) => s.activeFrameIndex);
   const setActiveFrame = useEditorStore((s) => s.setActiveFrame);
   const commitDocument = useEditorStore((s) => s.commitDocument);
+  const applyToAllFrames = useEditorStore((s) => s.applyToAllFrames);
+  const setApplyToAllFrames = useEditorStore((s) => s.setApplyToAllFrames);
 
   if (!doc || doc.frames.length <= 1) return null;
 
@@ -22,16 +24,35 @@ export function FrameStrip() {
   }
 
   return (
-    <div className="flex gap-2 overflow-x-auto border-t border-border bg-card px-3 py-2">
-      {doc.frames.map((frame, i) => (
-        <FrameThumb
-          key={i}
-          frame={frame}
-          active={i === activeFrameIndex}
-          onSelect={() => setActiveFrame(i)}
-          onDelete={() => handleDelete(i)}
-        />
-      ))}
+    <div className="flex items-start gap-2 border-t border-border bg-card px-3 py-2">
+      <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+        {doc.frames.map((frame, i) => (
+          <FrameThumb
+            key={i}
+            frame={frame}
+            active={i === activeFrameIndex}
+            onSelect={() => setActiveFrame(i)}
+            onDelete={() => handleDelete(i)}
+          />
+        ))}
+      </div>
+      {/* Outside the scroller so it stays reachable however many frames there are. */}
+      <button
+        type="button"
+        onClick={() => setApplyToAllFrames(!applyToAllFrames)}
+        aria-pressed={applyToAllFrames}
+        title="Draw, blur and recolor every frame at once"
+        className={cn(
+          "flex h-14 w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border",
+          "text-[10px] font-medium leading-tight transition-colors",
+          applyToAllFrames
+            ? "border-primary bg-primary/15 text-primary"
+            : "border-border text-muted-foreground",
+        )}
+      >
+        {applyToAllFrames ? <SquareCheck size={16} /> : <Square size={16} />}
+        <span>All frames</span>
+      </button>
     </div>
   );
 }

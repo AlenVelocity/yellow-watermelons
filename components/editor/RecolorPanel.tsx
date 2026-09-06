@@ -24,12 +24,12 @@ export function RecolorPanel() {
   const commitAllFrames = useEditorStore((s) => s.commitAllFrames);
   const selection = useEditorStore((s) => s.selection);
   const setSelection = useEditorStore((s) => s.setSelection);
+  const applyToAllFrames = useEditorStore((s) => s.applyToAllFrames);
 
   const [sourceHue, setSourceHue] = useState(RED_TO_YELLOW.sourceHue);
   const [tolerance, setTolerance] = useState(RED_TO_YELLOW.tolerance);
   const [targetHue, setTargetHue] = useState(RED_TO_YELLOW.targetHue);
   const [feather, setFeather] = useState(RED_TO_YELLOW.feather);
-  const [applyToAll, setApplyToAll] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -89,7 +89,7 @@ export function RecolorPanel() {
       feather,
       selection: selection ?? undefined,
     };
-    if (applyToAll) {
+    if (applyToAllFrames) {
       commitAllFrames(currentDoc.frames.map((f) => recolorImageData(f.imageData, options)));
     } else {
       commitFrame(activeFrameIndex, recolorImageData(currentFrame.imageData, options));
@@ -145,16 +145,10 @@ export function RecolorPanel() {
       <HueSlider label="Target hue" value={targetHue} onChange={setTargetHue} />
       <Slider label="Feather" value={feather} min={0} max={60} onChange={setFeather} />
 
-      {frameCount > 1 && (
-        <label className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={applyToAll}
-            onChange={(e) => setApplyToAll(e.target.checked)}
-            className={cn("h-4 w-4 accent-[var(--primary)]")}
-          />
-          Apply to all {frameCount} frames
-        </label>
+      {frameCount > 1 && applyToAllFrames && (
+        <p className="mb-3 text-xs text-muted-foreground">
+          Applies to all {frameCount} frames.
+        </p>
       )}
 
       <Button onClick={handleApply} className="w-full" size="default">

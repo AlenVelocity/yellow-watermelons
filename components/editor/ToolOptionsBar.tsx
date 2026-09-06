@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   Bold,
   Circle,
@@ -43,19 +43,17 @@ export function ToolOptionsBar() {
   const setShapeFilled = useEditorStore((s) => s.setShapeFilled);
   const textDraft = useEditorStore((s) => s.textDraft);
   const updateTextDraft = useEditorStore((s) => s.updateTextDraft);
+  const applyToAllFrames = useEditorStore((s) => s.applyToAllFrames);
   const commitDocument = useEditorStore((s) => s.commitDocument);
   const commitFrame = useEditorStore((s) => s.commitFrame);
   const commitAllFrames = useEditorStore((s) => s.commitAllFrames);
-
-  // Shared by the one-shot actions below (blur a selection, stamp a caption); brush
-  // strokes are inherently per-frame and ignore it.
-  const [applyToAllFrames, setApplyToAllFrames] = useState(false);
 
   if (!doc) return null;
   const frame = doc.frames[activeFrameIndex];
   if (!frame) return null;
   const frameCount = doc.frames.length;
 
+  /** Honours the frame strip's "All frames" switch. */
   function commitEdit(render: (source: ImageData) => ImageData) {
     if (!doc) return;
     if (applyToAllFrames && frameCount > 1) {
@@ -94,13 +92,6 @@ export function ToolOptionsBar() {
           {selection ? (
             <>
               <div className="flex-1" />
-              {frameCount > 1 && (
-                <AllFramesToggle
-                  checked={applyToAllFrames}
-                  onChange={setApplyToAllFrames}
-                  frameCount={frameCount}
-                />
-              )}
               <Button
                 size="sm"
                 onClick={() =>
@@ -179,13 +170,6 @@ export function ToolOptionsBar() {
             Outline
           </ToggleChip>
           <div className="flex-1" />
-          {frameCount > 1 && (
-            <AllFramesToggle
-              checked={applyToAllFrames}
-              onChange={setApplyToAllFrames}
-              frameCount={frameCount}
-            />
-          )}
           <Button
             size="sm"
             disabled={!draft.text.trim()}
@@ -417,27 +401,5 @@ function ToggleChip({
     >
       {children}
     </button>
-  );
-}
-
-function AllFramesToggle({
-  checked,
-  onChange,
-  frameCount,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  frameCount: number;
-}) {
-  return (
-    <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="h-4 w-4 accent-[var(--primary)]"
-      />
-      All {frameCount}
-    </label>
   );
 }

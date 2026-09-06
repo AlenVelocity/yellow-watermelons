@@ -2,10 +2,24 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useEditorStore, type Tool } from "@/lib/editor/store";
-import { beginEffectStroke, type EffectStroke } from "@/lib/editor/tools/effects";
-import { beginStroke, continueStroke, endStroke } from "@/lib/editor/tools/paint";
+import {
+  applyEffectAlongStroke,
+  beginEffectStroke,
+  type EffectStroke,
+} from "@/lib/editor/tools/effects";
+import {
+  beginStroke,
+  continueStroke,
+  endStroke,
+  renderStrokeToImageData,
+} from "@/lib/editor/tools/paint";
 import { rectToMask, polygonToMask, type Point, type Rect } from "@/lib/editor/tools/selection";
-import { drawShape, isDrawableShape, type ShapeSpec } from "@/lib/editor/tools/shapes";
+import {
+  drawShape,
+  isDrawableShape,
+  renderShapeToImageData,
+  type ShapeSpec,
+} from "@/lib/editor/tools/shapes";
 import { drawText } from "@/lib/editor/tools/text";
 
 const MIN_ZOOM = 1;
@@ -42,6 +56,7 @@ export function Canvas() {
   const shapeKind = useEditorStore((s) => s.shapeKind);
   const shapeFilled = useEditorStore((s) => s.shapeFilled);
   const textDraft = useEditorStore((s) => s.textDraft);
+  const applyToAllFrames = useEditorStore((s) => s.applyToAllFrames);
   const previewImageData = useEditorStore((s) => s.previewImageData);
   const pendingCropRect = useEditorStore((s) => s.pendingCropRect);
   const selection = useEditorStore((s) => s.selection);
@@ -51,6 +66,7 @@ export function Canvas() {
   const setSelection = useEditorStore((s) => s.setSelection);
   const updateTextDraft = useEditorStore((s) => s.updateTextDraft);
   const commitFrame = useEditorStore((s) => s.commitFrame);
+  const commitAllFrames = useEditorStore((s) => s.commitAllFrames);
 
   const frame = doc?.frames[activeFrameIndex] ?? null;
   const renderedData = previewImageData ?? frame?.imageData ?? null;
@@ -60,6 +76,10 @@ export function Canvas() {
   const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
   const isDrawingRef = useRef(false);
   const effectStrokeRef = useRef<EffectStroke | null>(null);
+  // A stroke is recorded as it is drawn so it can be replayed onto the other frames.
+  // The tool is captured at pointerdown, since a shortcut could switch tools mid-drag.
+  const strokePointsRef = useRef<Point[]>([]);
+  const strokeToolRef = useRef<Tool | null>(null);
   const isMovingTextRef = useRef(false);
   const shapeStartRef = useRef<Point | null>(null);
   const cropStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -166,6 +186,16 @@ export function Canvas() {
     updateLiveSelection(null);
   }
 
+  function startStrokeRecording(start: Point) {
+    strokePointsRef.current = [start];
+    strokeToolRef.current = activeTool;
+  }
+
+  /** True when an edit should be repeated across the whole animation. */
+  function shouldApplyToAllFrames() {
+    return applyToAllFrames && !!doc && doc.frames.length > 1;
+  }
+
   function shapeAt(start: Point, end: Point): ShapeSpec {
     return {
       kind: shapeKind,
@@ -175,6 +205,30 @@ export function Canvas() {
       strokeWidth: brushSize,
       filled: shapeFilled,
     };
+  }
+
+  /**
+   * Commits the finished stroke. For a single frame the canvas already holds the
+   * result; for the whole animation the recorded path is replayed onto every frame,
+   * which for blur means re-deriving the effect from each frame's own pixels.
+   */
+  function commitStroke(strokeTool: Tool | null, painted: ImageData) {
+    const points = strokePointsRef.current;
+    if (!shouldApplyToAllFrames() || !doc || points.length === 0) {
+      commitFrame(activeFrameIndex, painted);
+      return;
+    }
+    if (strokeTool === "blur") {
+      const options = { mode: effectMode, strength: effectStrength, size: brushSize };
+      commitAllFrames(doc.frames.map((f) => applyEffectAlongStroke(f.imageData, points, options)));
+      return;
+    }
+    if (strokeTool === "brush" || strokeTool === "eraser") {
+      const options = { size: brushSize, color: brushColor, mode: strokeTool };
+      commitAllFrames(doc.frames.map((f) => renderStrokeToImageData(f.imageData, points, options)));
+      return;
+    }
+    commitFrame(activeFrameIndex, painted);
   }
 
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -187,6 +241,8 @@ export function Canvas() {
       // Second finger down — switch to pinch mode, abandon any single-finger stroke.
       isDrawingRef.current = false;
       effectStrokeRef.current = null;
+      strokePointsRef.current = [];
+      strokeToolRef.current = null;
       isMovingTextRef.current = false;
       shapeStartRef.current = null;
       cropStartRef.current = null;
@@ -216,6 +272,7 @@ export function Canvas() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       isDrawingRef.current = true;
+      startStrokeRecording(coords);
       beginStroke(ctx, coords.x, coords.y, {
         size: brushSize,
         color: brushColor,
@@ -228,6 +285,7 @@ export function Canvas() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       isDrawingRef.current = true;
+      startStrokeRecording(coords);
       effectStrokeRef.current = beginEffectStroke(ctx, coords.x, coords.y, {
         mode: effectMode,
         strength: effectStrength,
@@ -288,11 +346,13 @@ export function Canvas() {
     if (isDrawingRef.current && (activeTool === "brush" || activeTool === "eraser")) {
       const ctx = canvas.getContext("2d");
       if (ctx) continueStroke(ctx, coords.x, coords.y);
+      strokePointsRef.current.push(coords);
       return;
     }
 
     if (isDrawingRef.current && activeTool === "blur") {
       effectStrokeRef.current?.extend(coords.x, coords.y);
+      strokePointsRef.current.push(coords);
       return;
     }
 
@@ -349,12 +409,15 @@ export function Canvas() {
       isDrawingRef.current = false;
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
+      const strokeTool = strokeToolRef.current;
       if (canvas && ctx) {
         // The blur brush composites straight onto the canvas and has no path to close.
-        if (effectStrokeRef.current) effectStrokeRef.current = null;
+        if (strokeTool === "blur") effectStrokeRef.current = null;
         else endStroke(ctx);
-        commitFrame(activeFrameIndex, ctx.getImageData(0, 0, canvas.width, canvas.height));
+        commitStroke(strokeTool, ctx.getImageData(0, 0, canvas.width, canvas.height));
       }
+      strokePointsRef.current = [];
+      strokeToolRef.current = null;
     }
 
     if (activeTool === "shape" && pointersRef.current.size === 0) {
@@ -363,7 +426,11 @@ export function Canvas() {
       const ctx = canvas?.getContext("2d");
       if (shape && canvas && ctx && isDrawableShape(shape)) {
         drawShape(ctx, shape);
-        commitFrame(activeFrameIndex, ctx.getImageData(0, 0, canvas.width, canvas.height));
+        if (shouldApplyToAllFrames() && doc) {
+          commitAllFrames(doc.frames.map((f) => renderShapeToImageData(f.imageData, shape)));
+        } else {
+          commitFrame(activeFrameIndex, ctx.getImageData(0, 0, canvas.width, canvas.height));
+        }
       }
       updateLiveShape(null);
     }
